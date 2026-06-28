@@ -1,0 +1,20 @@
+{
+  "name": "multi-step-shell",
+  "description": "Multi-step bash + file write: enumerate, compute, persist.",
+  "setup": {
+    "files": {
+      "nums/01.txt": "7\n",
+      "nums/02.txt": "13\n",
+      "nums/03.txt": "5\n",
+      "nums/04.txt": "11\n"
+    }
+  },
+  "goal": "Look in the nums/ subdirectory. Each file contains a single integer. Compute the sum of all numbers across these files using shell tools, and write only the final integer (no extra text) to total.txt in the current directory.",
+  "verify": {
+    "files_exist": ["total.txt"],
+    "file_contains": {
+      "total.txt": ["36"]
+    },
+    "min_tool_calls": 2
+  }
+}

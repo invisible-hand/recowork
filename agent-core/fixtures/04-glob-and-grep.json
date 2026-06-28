@@ -1,0 +1,20 @@
+{
+  "name": "glob-and-grep",
+  "description": "Use Glob and Grep tools to find a needle across files.",
+  "setup": {
+    "files": {
+      "src/a.ts": "export const HELLO = 'hi';\n",
+      "src/b.ts": "export const SECRET_TOKEN = 'sk-abc123';\n",
+      "src/c.ts": "export const GREETING = 'hello';\n",
+      "src/sub/d.ts": "// nothing interesting\nexport const VALUE = 42;\n"
+    }
+  },
+  "goal": "Search all .ts files under src/ for any line containing the substring SECRET. Report the file path(s) where you found a match in your final summary, then write the matching file paths (one per line) to matches.txt.",
+  "verify": {
+    "files_exist": ["matches.txt"],
+    "file_contains": {
+      "matches.txt": ["src/b.ts"]
+    },
+    "min_tool_calls": 1
+  }
+}

@@ -1,0 +1,35 @@
+FROM node:20-alpine AS base
+
+# Alpine = musl libc, which matches the libc the Claude Code native binary
+# is linked against. (The previous bookworm-slim base was glibc and rejected
+# the binary at load time.)
+RUN apk add --no-cache \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    ripgrep \
+    jq
+
+# node:20-alpine ships a non-root `node` user at uid 1000. Reuse it.
+WORKDIR /opt/recowork
+COPY agent-core/package.json /opt/recowork/package.json
+# Install runtime deps. The SDK's platform-specific optional dep
+# (@anthropic-ai/claude-agent-sdk-linux-arm64) ships a musl-linked binary,
+# which is why this base image must be Alpine.
+RUN npm install --omit=dev --omit=peer && npm cache clean --force
+
+COPY agent-core/dist/sidecar.mjs /opt/recowork/sidecar.mjs
+RUN chown -R node:node /opt/recowork
+
+# The agent operates against a bind-mounted workspace.
+RUN mkdir -p /workspace && chown node:node /workspace
+WORKDIR /workspace
+
+USER node
+
+ENV NODE_ENV=production \
+    NODE_NO_WARNINGS=1 \
+    NO_PROXY=localhost,127.0.0.1
+
+ENTRYPOINT ["node", "/opt/recowork/sidecar.mjs"]

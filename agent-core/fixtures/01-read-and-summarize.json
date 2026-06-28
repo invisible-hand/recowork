@@ -1,0 +1,16 @@
+{
+  "name": "read-and-summarize",
+  "description": "Read multiple files in the workspace and produce a one-paragraph summary.",
+  "setup": {
+    "files": {
+      "alpha.txt": "Alpha is the first letter of the Greek alphabet. It represents the beginning of things.",
+      "beta.txt": "Beta is the second letter. It often denotes a software release that is feature-complete but unstable.",
+      "gamma.txt": "Gamma is the third letter, frequently used in physics to denote a ratio of specific heats or a type of radiation."
+    }
+  },
+  "goal": "Read alpha.txt, beta.txt, and gamma.txt in the current directory. Then write a single-paragraph summary (3-4 sentences) into summary.md describing what each file says.",
+  "verify": {
+    "files_exist": ["summary.md"],
+    "min_tool_calls": 4
+  }
+}
