@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
  * Embedded at build time from package.json. Use the badge in the header to
  * verify which build you're running when behaviour looks stale.
  */
-const APP_VERSION = "0.1.15";
+const APP_VERSION = "0.1.16";
 import {
   loadSettings,
   saveSettings,
@@ -269,8 +269,10 @@ export default function App() {
           ),
         );
         setRunning(null);
-        // After the first successful turn, ask the LLM to title the session.
-        if (e.ok && settings) {
+        // Ask the LLM to title the session after the first turn — even if
+        // the turn ended in a tool error, we still have a user message
+        // worth titling around.
+        if (settings) {
           void maybeGenerateTitle(e.runId);
         }
         break;
@@ -455,13 +457,22 @@ export default function App() {
       .join(" ");
 
     setLogLines((l) => [...l, "[title] requesting title from baseten…"]);
-    const title = await generateTitle(
-      liveSettings.apiKey,
-      liveSettings.baseUrl,
-      liveSettings.model,
-      t.userGoal,
-      firstAgentText,
-    );
+    let title: string | null = null;
+    try {
+      title = await generateTitle(
+        liveSettings.apiKey,
+        liveSettings.baseUrl,
+        liveSettings.model,
+        t.userGoal,
+        firstAgentText,
+      );
+    } catch (err) {
+      setLogLines((l) => [
+        ...l,
+        `[title] error: ${err instanceof Error ? err.message : String(err)}`,
+      ]);
+      return;
+    }
     if (!title) {
       setLogLines((l) => [...l, "[title] generation failed; keeping verbatim"]);
       return;

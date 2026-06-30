@@ -223,6 +223,98 @@ fn enrich_path() {
     }
 }
 
+/// Ask the inference API for a 2–5 word chat title. Runs server-side so we
+/// don't fight the webview's CORS rules (Baseten doesn't set
+/// Access-Control-Allow-Origin, and the `anthropic-version` header would
+/// trigger a preflight regardless).
+///
+/// Returns `Ok(None)` on any soft failure (network, non-2xx, empty body,
+/// malformed JSON, title too long) so the caller can fall back to the
+/// verbatim derivation without crashing.
+#[tauri::command]
+async fn generate_title(
+    api_key: String,
+    base_url: String,
+    model: String,
+    user_message: String,
+    agent_reply: Option<String>,
+) -> Result<Option<String>, String> {
+    if api_key.trim().is_empty() {
+        return Ok(None);
+    }
+    let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+    let user_excerpt: String = user_message.chars().take(600).collect();
+    let reply_excerpt: String = agent_reply
+        .unwrap_or_default()
+        .chars()
+        .take(600)
+        .collect();
+    let mut prompt = format!(
+        "Give a 2–5 word title (Title Case, no punctuation, no quotes) for a chat that starts with:\n\nUser: {}",
+        user_excerpt
+    );
+    if !reply_excerpt.is_empty() {
+        prompt.push_str(&format!("\nAssistant: {}", reply_excerpt));
+    }
+    prompt.push_str("\n\nReturn only the title.");
+
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 24,
+        "messages": [{ "role": "user", "content": prompt }],
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .post(&url)
+        .bearer_auth(api_key)
+        .header("Content-Type", "application/json")
+        .header("anthropic-version", "2023-06-01")
+        .json(&body)
+        .send()
+        .await;
+    let resp = match resp {
+        Ok(r) => r,
+        Err(e) => return Err(format!("network error: {}", e)),
+    };
+    if !resp.status().is_success() {
+        let code = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(format!("HTTP {}: {}", code, text.chars().take(240).collect::<String>()));
+    }
+    let payload: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return Err(format!("bad JSON: {}", e)),
+    };
+    let raw = payload
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.iter().find(|b| b.get("type").and_then(|t| t.as_str()) == Some("text")))
+        .and_then(|b| b.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    // Strip surrounding quotes/backticks/trailing punctuation, take only the
+    // first line, cap at 60 chars.
+    let cleaned: String = raw
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == '`' || c == '.')
+        .trim()
+        .to_string();
+    if cleaned.is_empty() || cleaned.chars().count() > 60 {
+        return Ok(None);
+    }
+    Ok(Some(cleaned))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     enrich_path();
@@ -233,7 +325,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             resolve_agent_paths,
             is_container_available,
-            sandbox_stats
+            sandbox_stats,
+            generate_title
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

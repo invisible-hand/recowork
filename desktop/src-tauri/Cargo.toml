@@ -1,6 +1,6 @@
 [package]
 name = "recowork"
-version = "0.1.15"
+version = "0.1.16"
 description = "Recowork — agentic knowledge work on GLM-5.2 via Baseten."
 authors = ["recowork"]
 edition = "2021"
@@ -20,3 +20,7 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+# Used for the title-generation HTTP call. The webview's fetch hits CORS
+# preflight against Baseten (custom `anthropic-version` header) so we
+# route the request through Rust instead.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
