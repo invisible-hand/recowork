@@ -7,6 +7,13 @@ via **Baseten**, driven by the **Claude Agent SDK** harness, wrapped in a
 Users supply a Baseten API key, pick a workspace folder, and start talking.
 Tool calls execute inside an Apple Container sandbox by default.
 
+![Chat — fetch HN frontpage, sort top stories, write Twitter thread](docs/screenshots/chat.png)
+
+A single turn that chains `Bash → WebFetch → Write → WebFetch → Write` to
+produce a structured Hacker News digest under the workspace. Tool calls
+collapse into named pills inline with the agent's reasoning; the green
+pill at the bottom is the per-turn result summary.
+
 ## Requirements
 
 To run the packaged app:
@@ -53,6 +60,15 @@ desktop (Tauri 2 + React)                agent-core (Node / Claude Agent SDK)
 - The native `claude` binary that ships as an optional SDK dep is copied into
   Tauri's `resources/` and pointed at via `CLAUDE_CODE_EXECUTABLE`.
 
+![Tools tab — built-in tools, MCP connectors, safety summary](docs/screenshots/tools.png)
+
+The Tools tab is the canonical surface for "what can this agent actually
+do?": every built-in tool is listed with its category (Read / Write /
+Search / Shell / Net / Agent) and whether it requires approval under the
+current safety mode, plus every connected MCP server. The Safety summary
+at the bottom mirrors the live approval-mode, sandbox state, and
+workspace path.
+
 ## Repo layout
 
 ```
@@ -96,6 +112,14 @@ image, so a fresh build picks up the latest agent-core changes.
 Network egress is currently unrestricted inside the container. Treat the
 workspace as if its contents can be POSTed anywhere — don't drop secrets in
 there.
+
+![Stats tab — usage, token breakdown, live sandbox containers](docs/screenshots/stats.png)
+
+The Stats tab tracks token spend against Baseten's published GLM-5.2
+rate, broken down by fresh / cache-write / cache-read / output so the
+cache-hit ratio is legible at a glance. The Sandbox panel queries the
+Apple Container CLI in real time and lists every active VM with its
+allocated CPUs, memory, and IP.
 
 ## Ship
 
