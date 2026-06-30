@@ -24,6 +24,7 @@ export interface SidecarConfig {
   provider: "baseten-anthropic" | "baseten-openai-via-litellm";
   sandbox?: {
     enabled: boolean;
+    /** OCI image tag for the sandbox container. */
     image: string;
     workspaceDir: string;
   };
@@ -86,6 +87,8 @@ export type AgentEvent =
 
 export interface RunSpec {
   id: string;
+  /** Chat session id (frontend's, not the SDK's). Used to chain turns. */
+  chatSessionId?: string;
   goal: string;
   cwd?: string;
   mcpServers?: Record<
@@ -119,23 +122,23 @@ export class Sidecar {
           "Sandbox enabled but no workspace directory selected. Pick one in Settings.",
         );
       }
-      // docker run -i recowork-agent:latest, mounting the workspace and
-      // dropping all linux capabilities. The container ships its own
-      // platform-native claude binary via npm's optional deps, so the
-      // CLAUDE_CODE_EXECUTABLE env var is NOT needed here.
+      // Apple Container Framework: `container run` runs each container as a
+      // lightweight Linux VM. The OCI image is the same one we build from
+      // sandbox/Dockerfile. The container ships its own linux-arm64 native
+      // claude binary via npm's optional deps, so we don't pass
+      // CLAUDE_CODE_EXECUTABLE here.
       const args = [
         "run",
         "--rm",
         "-i",
         "--cap-drop=ALL",
-        "--security-opt=no-new-privileges",
         "--name",
         `recowork-${Date.now()}`,
-        "-v",
+        "--volume",
         `${config.sandbox.workspaceDir}:/workspace`,
         config.sandbox.image,
       ];
-      cmd = Command.create("docker", args);
+      cmd = Command.create("container", args);
     } else {
       const paths = await invoke<AgentPaths>("resolve_agent_paths");
       cmd = Command.create("node", [paths.sidecar_js], {

@@ -1,15 +1,15 @@
 FROM node:20-alpine AS base
 
-# Alpine = musl libc, which matches the libc the Claude Code native binary
-# is linked against. (The previous bookworm-slim base was glibc and rejected
-# the binary at load time.)
+# Alpine = musl libc, matches the libc the Claude Code native binary is
+# linked against. The SDK's Bash tool requires a POSIX shell (bash) on PATH
+# and a handful of standard userland utilities. node:20-alpine ships busybox
+# but no bash, so we install the minimum here. Keep this list deliberately
+# small — anything we add is something the agent can invoke at runtime.
 RUN apk add --no-cache \
     bash \
+    coreutils \
     ca-certificates \
-    curl \
-    git \
-    ripgrep \
-    jq
+    git
 
 # node:20-alpine ships a non-root `node` user at uid 1000. Reuse it.
 WORKDIR /opt/recowork

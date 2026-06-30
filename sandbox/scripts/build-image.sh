@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Build the Recowork sandbox image.
+# Build the Recowork sandbox image using Apple's native container framework.
 #
-# Assumes OrbStack (or another docker-compatible daemon) is running. The
-# Dockerfile lives in sandbox/ but the build context is the repo root so we
-# can COPY the agent-core dist + package.json from there.
+# Requires `container` (apple/container) to be installed and running:
+#   brew install container && container system start
+#
+# The Dockerfile lives in sandbox/ but the build context is the repo root so
+# we can COPY the agent-core dist + package.json from there.
 
 set -euo pipefail
 
@@ -13,17 +15,29 @@ IMAGE_NAME="${RECOWORK_IMAGE:-recowork-agent:latest}"
 
 echo "▸ building ${IMAGE_NAME} from ${REPO_ROOT}"
 
-# Ensure the sidecar bundle exists before building — docker COPY would fail
-# silently with a confusing error otherwise.
-if [ ! -f "${REPO_ROOT}/agent-core/dist/sidecar.mjs" ]; then
-  echo "  agent-core/dist/sidecar.mjs missing — running sidecar build first"
-  (cd desktop && node scripts/build-sidecar.mjs)
+if ! command -v container >/dev/null 2>&1; then
+  echo "  ERROR: \`container\` CLI not found. Install with: brew install container"
+  exit 1
 fi
 
-docker build \
+if ! container system status 2>/dev/null | grep -q running; then
+  echo "  container system not running — starting it now"
+  container system start --enable-kernel-install
+fi
+
+# ALWAYS rebuild the sidecar bundle before baking it into the image. Skipping
+# this when the file exists was a real bug: edits to agent-core/src/ never
+# made it into the running container until the user manually deleted the
+# bundle and re-ran. Cheap to rebuild (~1s) so just do it.
+echo "▸ rebuilding sidecar bundle"
+(cd desktop && node scripts/build-sidecar.mjs)
+
+container build \
   -f sandbox/Dockerfile \
   -t "${IMAGE_NAME}" \
+  --dns 8.8.8.8 \
+  --dns 1.1.1.1 \
   "${REPO_ROOT}"
 
 echo "▸ image ${IMAGE_NAME} built."
-docker image inspect "${IMAGE_NAME}" --format '  digest: {{.Id}}{{"\n"}}  size:   {{.Size}} bytes'
+container image inspect "${IMAGE_NAME}" 2>&1 | head -20 || true

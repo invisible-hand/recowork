@@ -10,7 +10,7 @@ served via **Baseten**, driven by the **Claude Agent SDK** harness, wrapped in a
 |------:|------|------|
 | 0 | Manual validation in Claude Desktop 3P mode | Skipped (per user) |
 | 1 | Headless Node/TS harness, fixture suite | ✅ 4/4 fixtures, 100% tool-call success |
-| 2 | OrbStack/Docker sandbox | ✅ workspace isolation done; egress allowlist deferred |
+| 2 | Apple Container sandbox | ✅ workspace isolation done; egress allowlist deferred |
 | 3 | Tauri 2 desktop app with sidecar | ✅ scaffolded |
 
 ## Architecture
@@ -112,19 +112,23 @@ npx tsx src/fixtures-runner.ts
 
 Logs are JSONL, one tool call per line, in `agent-core/logs/`.
 
-## Sandbox (Phase 2)
+## Sandbox
 
-The sandbox runs the entire agent inside an OrbStack/Docker container with
-the workspace bind-mounted at `/workspace`, all linux capabilities dropped,
-and no-new-privileges set. The container ships its own platform-native
-`claude` binary via npm's optional deps, so the host-side path resolution
-isn't needed in this mode.
+The sandbox runs the entire agent inside Apple's native container framework
+(introduced in macOS Tahoe / Golden Gate 16, `apple/container` v1.0). Each
+container is a lightweight Linux VM with the workspace bind-mounted at
+`/workspace`, all Linux capabilities dropped, and a non-root user. The image
+ships its own linux-arm64 native `claude` binary via npm's optional deps.
 
 ```bash
-# One-time: build the image
+# Prereq, once per machine:
+brew install container
+container system start --enable-kernel-install
+
+# Build the image:
 bash sandbox/scripts/build-image.sh
 
-# Then enable: Settings → Safety → "Run the agent inside an OrbStack/Docker container"
+# Then enable in the app: Settings → Safety → Sandbox
 ```
 
 **What the sandbox currently protects against:**

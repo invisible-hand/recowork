@@ -9,18 +9,19 @@
     "shell:default",
     "shell:allow-stdin-write",
     "shell:allow-kill",
+    "shell:allow-open",
     {
       "identifier": "shell:allow-execute",
       "allow": [
         { "name": "node", "cmd": "node", "args": true },
-        { "name": "docker", "cmd": "docker", "args": true }
+        { "name": "container", "cmd": "container", "args": true }
       ]
     },
     {
       "identifier": "shell:allow-spawn",
       "allow": [
         { "name": "node", "cmd": "node", "args": true },
-        { "name": "docker", "cmd": "docker", "args": true }
+        { "name": "container", "cmd": "container", "args": true }
       ]
     },
     "store:default",

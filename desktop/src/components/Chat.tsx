@@ -1,4 +1,7 @@
 import { useEffect, useRef } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { open as openExternal } from "@tauri-apps/plugin-shell";
 
 export interface TurnUsage {
   input_tokens?: number;
@@ -71,7 +74,7 @@ export function Chat({ turns, running }: Props) {
       {turns.map((t) => (
         <article className="chat-turn" key={t.runId}>
           <div className="chat-user">
-            <div className="chat-bubble user">{t.userGoal}</div>
+            <div className="chat-msg-user">{t.userGoal}</div>
           </div>
           <div className="chat-agent">
             {t.blocks.map((b, i) => (
@@ -85,9 +88,42 @@ export function Chat({ turns, running }: Props) {
   );
 }
 
+/**
+ * The model occasionally emits a list marker followed by blank lines, then
+ * the actual content as a separate paragraph (e.g. `1.\n\n**Title**\nBody`).
+ * ReactMarkdown faithfully renders that as `<ol><li></li></ol><p>...</p>`
+ * which produces an orphan marker with an enormous gap. Collapse those.
+ */
+function fixMarkdown(src: string): string {
+  // List marker line followed by ≥1 blank lines: pull the next content up.
+  return src.replace(/^([ \t]*)(\d+\.|[*+-])[ \t]*$\n(?:[ \t]*\n)+/gm, "$1$2 ");
+}
+
 function BlockView({ block }: { block: ChatBlock }) {
   if (block.kind === "text") {
-    return <div className="chat-bubble assistant">{block.text}</div>;
+    return (
+      <div className="chat-msg-agent markdown">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            // Links open in the user's default browser, not the webview.
+            a: ({ href, children }) => (
+              <a
+                href={href}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (href) void openExternal(href);
+                }}
+              >
+                {children}
+              </a>
+            ),
+          }}
+        >
+          {fixMarkdown(block.text)}
+        </ReactMarkdown>
+      </div>
+    );
   }
   if (block.kind === "tool_use") {
     const status =
@@ -115,7 +151,10 @@ function BlockView({ block }: { block: ChatBlock }) {
       </details>
     );
   }
-  // result
+  // Result chip: only show when interesting (tools were used, or it failed).
+  // A successful plain-text reply needs no "done" badge — it adds visual
+  // noise to what should read like prose.
+  if (block.ok && block.toolCalls === 0) return null;
   return (
     <div className={`chat-result ${block.ok ? "ok" : "fail"}`}>
       {block.ok ? "✓ done" : "✗ failed"} · {block.toolCalls} calls ·{" "}

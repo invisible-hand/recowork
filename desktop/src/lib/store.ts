@@ -2,15 +2,6 @@ import { LazyStore } from "@tauri-apps/plugin-store";
 
 export type ApprovalMode = "always" | "auto" | "writes_only";
 
-export type ThemeName =
-  | "linen"
-  | "sage"
-  | "lavender"
-  | "coral"
-  | "slate"
-  | "blossom"
-  | "midnight";
-
 export interface AppSettings {
   apiKey: string;
   baseUrl: string;
@@ -21,22 +12,21 @@ export interface AppSettings {
   approvalMode: ApprovalMode;
   mcpFilesystemEnabled: boolean;
   sandboxEnabled: boolean;
-  sandboxImage: string;
-  theme: ThemeName;
 }
+
+/** The OCI image tag the sandbox uses. Not user-configurable. */
+export const SANDBOX_IMAGE = "recowork-agent:latest";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: "",
   baseUrl: "https://inference.baseten.co",
   model: "zai-org/GLM-5.2",
-  maxOutputTokens: 8192,
+  maxOutputTokens: 16384,
   provider: "baseten-anthropic",
   workspaceDir: "",
   approvalMode: "writes_only",
   mcpFilesystemEnabled: true,
-  sandboxEnabled: false,
-  sandboxImage: "recowork-agent:latest",
-  theme: "linen",
+  sandboxEnabled: true,
 };
 
 const STORE_PATH = "settings.json";

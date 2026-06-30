@@ -16,6 +16,8 @@ export interface RunAgentOptions {
   /** Approval handler. When provided, permissionMode is forced to 'default'. */
   canUseTool?: CanUseTool;
   abortController?: AbortController;
+  /** SDK session id to resume (multi-turn conversation continuity). */
+  resume?: string;
   onEvent?: (kind: string, payload: unknown) => void;
 }
 
@@ -69,6 +71,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
     // resolved path here so the SDK doesn't try to resolve it through
     // node_modules (which is brittle in packaged builds).
     pathToClaudeCodeExecutable: process.env.CLAUDE_CODE_EXECUTABLE,
+    resume: opts.resume,
     env: {
       ...process.env,
       ...cfg.sdkEnv,
@@ -139,8 +142,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<RunAgentResult> {
         case "result": {
           logger.record({ kind: "result", output: msg });
           // The SDK's result carries usage and Anthropic-priced cost. We
-          // forward both raw; the host overlays Baseten pricing.
-          const m = msg as {
+          // forward raw too; the host extracts session_id for resume and
+          // overlays Baseten pricing.
+          const m = msg as unknown as {
             usage?: Record<string, number>;
             total_cost_usd?: number;
             duration_ms?: number;

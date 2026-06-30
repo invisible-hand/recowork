@@ -16,6 +16,8 @@ export interface SessionSummary {
   title: string;
   createdAt: number;
   updatedAt: number;
+  /** When set, the session sticks to the top of the sidebar list. */
+  pinnedAt?: number;
 }
 
 export interface ChatSession extends SessionSummary {
@@ -35,8 +37,13 @@ function getStore(): LazyStore {
 export async function listSessions(): Promise<SessionSummary[]> {
   const s = getStore();
   const idx = ((await s.get(INDEX_KEY)) as SessionSummary[]) ?? [];
-  // Newest first.
-  return [...idx].sort((a, b) => b.updatedAt - a.updatedAt);
+  // Pinned first (by pin time desc), then everything else (by recency).
+  return [...idx].sort((a, b) => {
+    if (a.pinnedAt && !b.pinnedAt) return -1;
+    if (!a.pinnedAt && b.pinnedAt) return 1;
+    if (a.pinnedAt && b.pinnedAt) return b.pinnedAt - a.pinnedAt;
+    return b.updatedAt - a.updatedAt;
+  });
 }
 
 export async function loadSession(id: string): Promise<ChatSession | null> {
@@ -55,10 +62,35 @@ export async function saveSession(sess: ChatSession): Promise<void> {
     title: sess.title,
     createdAt: sess.createdAt,
     updatedAt: sess.updatedAt,
+    pinnedAt: sess.pinnedAt,
   };
   const without = idx.filter((e) => e.id !== sess.id);
   await s.set(INDEX_KEY, [...without, summary]);
   await s.save();
+}
+
+/**
+ * Toggle pinned state on a session. Returns the new pinnedAt value (or
+ * undefined when unpinned) so callers can update in-memory state without
+ * a refetch.
+ */
+export async function togglePinSession(id: string): Promise<number | undefined> {
+  const s = getStore();
+  const idx = ((await s.get(INDEX_KEY)) as SessionSummary[]) ?? [];
+  const entry = idx.find((e) => e.id === id);
+  if (!entry) return undefined;
+  const nextPinnedAt = entry.pinnedAt ? undefined : Date.now();
+  const nextIdx = idx.map((e) =>
+    e.id === id ? { ...e, pinnedAt: nextPinnedAt } : e,
+  );
+  await s.set(INDEX_KEY, nextIdx);
+  // Mirror the change on the full session body so it survives a reload.
+  const raw = (await s.get(sessionKey(id))) as ChatSession | null;
+  if (raw) {
+    await s.set(sessionKey(id), { ...raw, pinnedAt: nextPinnedAt });
+  }
+  await s.save();
+  return nextPinnedAt;
 }
 
 export async function deleteSession(id: string): Promise<void> {

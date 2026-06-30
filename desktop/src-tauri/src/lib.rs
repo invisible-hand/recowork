@@ -99,24 +99,75 @@ fn native_pkg_name() -> &'static str {
     "claude-agent-sdk-win32-x64"
 }
 
-/// Returns true if a docker daemon is reachable. The frontend uses this to
-/// decide whether to default sandbox mode on at first launch.
+/// Returns true if Apple's `container` CLI is installed and its api-server
+/// is running. The frontend uses this to decide whether to default sandbox
+/// mode on at first launch.
 #[tauri::command]
-fn is_docker_available() -> bool {
-    let result = std::process::Command::new("docker")
-        .arg("info")
-        .arg("--format")
-        .arg("{{.ServerVersion}}")
+fn is_container_available() -> bool {
+    let result = std::process::Command::new("container")
+        .arg("system")
+        .arg("status")
         .output();
     match result {
-        Ok(out) => out.status.success(),
+        Ok(out) => {
+            if !out.status.success() {
+                return false;
+            }
+            let s = String::from_utf8_lossy(&out.stdout);
+            s.contains("running")
+        }
         Err(_) => false,
     }
 }
 
+/// Snapshot of the container framework's state. Used by the Stats tab.
+#[derive(Serialize, Default)]
+struct SandboxStats {
+    running: bool,
+    containers: Vec<serde_json::Value>,
+    /// Raw `container system property list` output (TOML-ish lines).
+    properties: String,
+}
+
+#[tauri::command]
+fn sandbox_stats() -> SandboxStats {
+    let mut s = SandboxStats::default();
+    if let Ok(out) = std::process::Command::new("container")
+        .args(["system", "status"])
+        .output()
+    {
+        s.running =
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("running");
+    }
+    if !s.running {
+        return s;
+    }
+    if let Ok(out) = std::process::Command::new("container")
+        .args(["list", "-a", "--format", "json"])
+        .output()
+    {
+        if out.status.success() {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                if let Some(arr) = v.as_array() {
+                    s.containers = arr.clone();
+                }
+            }
+        }
+    }
+    if let Ok(out) = std::process::Command::new("container")
+        .args(["system", "property", "list"])
+        .output()
+    {
+        if out.status.success() {
+            s.properties = String::from_utf8_lossy(&out.stdout).into_owned();
+        }
+    }
+    s
+}
+
 /// Tauri apps launched from Finder/Launchd inherit a stripped-down PATH that
 /// usually doesn't include `/usr/local/bin` or `/opt/homebrew/bin`. Since the
-/// app shells out to `node`, `docker`, and `npx` (for MCP servers), we have
+/// app shells out to `node`, `container`, and `npx` (for MCP servers), we have
 /// to extend PATH ourselves at startup. We pull the user's interactive shell
 /// PATH (`bash -lic 'echo $PATH'`) and merge it with a small set of common
 /// install locations.
@@ -165,7 +216,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             resolve_agent_paths,
-            is_docker_available
+            is_container_available,
+            sandbox_stats
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

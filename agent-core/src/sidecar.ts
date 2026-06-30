@@ -45,6 +45,8 @@ interface ConfigMessage {
 interface RunMessage {
   type: "run";
   id: string;
+  /** Frontend chat-session id. Used to chain turns with SDK `resume`. */
+  chatSessionId?: string;
   goal: string;
   cwd?: string;
   mcpServers?: Options["mcpServers"];
@@ -81,6 +83,12 @@ interface PendingApproval {
 let runtimeConfig: ConfigMessage | null = null;
 const pendingApprovals = new Map<string, PendingApproval>();
 const activeRuns = new Map<string, AbortController>();
+/**
+ * Frontend chat session id → SDK session id. We populate this as the SDK
+ * emits messages carrying session_id, and reuse it on the next turn so the
+ * conversation has memory.
+ */
+const sdkSessionByChat = new Map<string, string>();
 
 const WRITE_TOOLS = new Set([
   "Write",
@@ -216,6 +224,15 @@ async function handleRun(msg: RunMessage): Promise<void> {
     ? makeCanUseTool(msg.id, mode, msg.workspaceLock)
     : undefined;
 
+  // Reuse the SDK session for this chat if we've seen one before. This is
+  // what gives the agent memory across turns.
+  const resume = msg.chatSessionId
+    ? sdkSessionByChat.get(msg.chatSessionId)
+    : undefined;
+  if (resume) {
+    log("info", `resuming SDK session ${resume.slice(0, 8)} for chat ${msg.chatSessionId?.slice(0, 8)}`);
+  }
+
   const result = await runAgent({
     goal: msg.goal,
     runId: msg.id,
@@ -225,6 +242,7 @@ async function handleRun(msg: RunMessage): Promise<void> {
     permissionMode: mode === "auto" ? "bypassPermissions" : "default",
     canUseTool,
     abortController,
+    resume,
     onEvent: (kind, payload) => {
       switch (kind) {
         case "text":
@@ -258,12 +276,25 @@ async function handleRun(msg: RunMessage): Promise<void> {
         }
         case "result": {
           const p = payload as {
+            raw?: { session_id?: string };
             usage?: Record<string, number>;
             sdkCostUsd?: number;
             durationMs?: number;
             durationApiMs?: number;
             numTurns?: number;
           };
+          // Remember the SDK session id so the next turn in this chat
+          // resumes properly.
+          const sid = p.raw?.session_id;
+          log(
+            "info",
+            `result for chat=${msg.chatSessionId?.slice(0, 8)} ` +
+              `session_id=${sid ? sid.slice(0, 8) : "(missing)"} ` +
+              `raw_keys=${p.raw ? Object.keys(p.raw).join(",").slice(0, 80) : "(no raw)"}`,
+          );
+          if (sid && msg.chatSessionId) {
+            sdkSessionByChat.set(msg.chatSessionId, sid);
+          }
           out({
             type: "usage",
             runId: msg.id,

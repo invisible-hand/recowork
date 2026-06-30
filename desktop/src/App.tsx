@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+
+/**
+ * Embedded at build time from package.json. Use the badge in the header to
+ * verify which build you're running when behaviour looks stale.
+ */
+const APP_VERSION = "0.1.14";
 import {
   loadSettings,
   saveSettings,
   type AppSettings,
+  SANDBOX_IMAGE,
 } from "./lib/store";
 import {
   Sidecar,
@@ -17,17 +24,21 @@ import {
   loadSession,
   newSession,
   saveSession,
+  togglePinSession,
   type ChatSession,
   type SessionSummary,
 } from "./lib/sessions";
+import { appendUsage } from "./lib/usage";
+import { generateTitle } from "./lib/titles";
 import { Chat, type ChatTurn } from "./components/Chat";
 import { Settings } from "./components/Settings";
 import { ApprovalModal, type PendingApproval } from "./components/ApprovalModal";
 import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
 import { Stats } from "./components/Stats";
+import { Tools } from "./components/Tools";
 
-type View = "chat" | "settings" | "setup" | "stats";
+type View = "chat" | "settings" | "setup" | "stats" | "tools";
 
 export default function App() {
   const [view, setView] = useState<View>("chat");
@@ -36,11 +47,55 @@ export default function App() {
   const [session, setSession] = useState<ChatSession | null>(null);
   const [summaries, setSummaries] = useState<SessionSummary[]>([]);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
-  const [logLines, setLogLines] = useState<string[]>([]);
+  // Log lines are captured for future debug surfaces, but the UI no longer
+  // shows them inline. Drop the read binding to keep typecheck happy.
+  const [, setLogLines] = useState<string[]>([]);
   const sidecarRef = useRef<Sidecar | null>(null);
-  // Live snapshot of the session for the auto-save effect, which depends on
-  // turns but updating it via state alone is fine.
+  // Snapshot of what's already on disk for the active session. The auto-save
+  // effect compares against this so loading a session doesn't re-write it
+  // (which would bump updatedAt and re-rank the sidebar).
+  const lastSavedTurnsRef = useRef<unknown>(null);
+  const lastSavedSessionIdRef = useRef<string | null>(null);
+  // The sidecar's onEvent callback captures whatever `session` / `settings`
+  // existed when the sidecar started — usually an empty session. Without a
+  // ref, by the time the `result` event arrives, `maybeGenerateTitle` would
+  // be reading a stale session that has no record of the just-completed
+  // turn, so the title-generation early-returns silently.
+  const sessionRef = useRef<ChatSession | null>(null);
+  const settingsRef = useRef<AppSettings | null>(null);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
   const turns = session?.turns ?? [];
+
+  // Sidebar width — persisted across launches via localStorage. Clamped to
+  // [160, 480] so the user can't drag it to a useless extreme.
+  const [sidebarW, setSidebarW] = useState<number>(() => {
+    const raw = localStorage.getItem("recowork.sidebarW");
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) && n >= 160 && n <= 480 ? n : 220;
+  });
+  useEffect(() => {
+    localStorage.setItem("recowork.sidebarW", String(sidebarW));
+  }, [sidebarW]);
+  function startSidebarDrag(e: React.MouseEvent<HTMLDivElement>): void {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarW;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    function onMove(ev: MouseEvent): void {
+      const next = Math.min(480, Math.max(160, startW + (ev.clientX - startX)));
+      setSidebarW(next);
+    }
+    function onUp(): void {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
 
   // Load persisted settings + session index on mount. On first run, probe
   // for docker so we can default sandbox mode on when isolation is cheap.
@@ -50,12 +105,12 @@ export default function App() {
 
       // First-run detection: settings store doesn't have a sentinel yet, so
       // we treat "no apiKey" as a stand-in for first launch. On first launch,
-      // default sandbox ON if and only if docker is reachable.
+      // default sandbox ON iff Apple's `container` daemon is reachable.
       let next = s;
       if (!s.apiKey) {
         try {
-          const dockerOk = await invoke<boolean>("is_docker_available");
-          next = { ...s, sandboxEnabled: dockerOk };
+          const containerOk = await invoke<boolean>("is_container_available");
+          next = { ...s, sandboxEnabled: containerOk };
           await saveSettings(next);
         } catch {
           // ignore — if probe fails, keep defaults
@@ -75,24 +130,41 @@ export default function App() {
     })();
   }, []);
 
-  // Apply the theme to <html> whenever it changes. This drives the CSS
-  // variable system in styles.css.
+  // One hardcoded theme (Slate). The CSS variables for the other palettes
+  // are still in styles.css but no UI exposes them.
   useEffect(() => {
-    const theme = settings?.theme ?? "linen";
-    document.documentElement.setAttribute("data-theme", theme);
-  }, [settings?.theme]);
+    document.documentElement.setAttribute("data-theme", "slate");
+  }, []);
 
-  // Persist the active session whenever its turns change.
+  // Persist the active session when its turns actually change. Loading a
+  // session sets turns to a fresh reference but identical content; we skip
+  // those by comparing the turns reference to the last-saved snapshot.
   useEffect(() => {
     if (!session) return;
     if (session.turns.length === 0) return; // don't save empty sessions
+    if (
+      lastSavedSessionIdRef.current === session.id &&
+      lastSavedTurnsRef.current === session.turns
+    ) {
+      return; // unchanged since load/save
+    }
     void (async () => {
+      // Preserve any custom title (LLM-generated or user-edited). Only
+      // overwrite when the current title is empty, "New chat", or still
+      // matches the verbatim derivation of the first user message.
+      const verbatim = deriveTitle(session.turns);
+      const titleIsAuto =
+        !session.title ||
+        session.title === "New chat" ||
+        session.title === verbatim;
       const next: ChatSession = {
         ...session,
-        title: deriveTitle(session.turns),
+        title: titleIsAuto ? verbatim : session.title,
         updatedAt: Date.now(),
       };
       await saveSession(next);
+      lastSavedSessionIdRef.current = next.id;
+      lastSavedTurnsRef.current = next.turns;
       const idx = await listSessions();
       setSummaries(idx);
     })();
@@ -119,7 +191,7 @@ export default function App() {
           provider: settings.provider,
           sandbox: {
             enabled: settings.sandboxEnabled,
-            image: settings.sandboxImage,
+            image: SANDBOX_IMAGE,
             workspaceDir: settings.workspaceDir,
           },
         });
@@ -143,7 +215,6 @@ export default function App() {
     settings?.maxOutputTokens,
     settings?.provider,
     settings?.sandboxEnabled,
-    settings?.sandboxImage,
     settings?.workspaceDir,
   ]);
 
@@ -198,6 +269,10 @@ export default function App() {
           ),
         );
         setRunning(null);
+        // After the first successful turn, ask the LLM to title the session.
+        if (e.ok && settings) {
+          void maybeGenerateTitle(e.runId);
+        }
         break;
       case "usage":
         // Attach usage info to the active turn.
@@ -220,6 +295,23 @@ export default function App() {
               }
             : cur,
         );
+        // Also persist to the permanent usage log so deleting sessions
+        // doesn't erase the running cost view.
+        if (settings && e.usage) {
+          void appendUsage({
+            ts: Date.now(),
+            model: settings.model,
+            input_tokens: e.usage.input_tokens ?? 0,
+            output_tokens: e.usage.output_tokens ?? 0,
+            cache_read_input_tokens: e.usage.cache_read_input_tokens ?? 0,
+            cache_creation_input_tokens:
+              e.usage.cache_creation_input_tokens ?? 0,
+            durationMs: e.durationMs ?? 0,
+            toolCalls: 0,
+            toolErrors: 0,
+            sessionId: session?.id,
+          });
+        }
         break;
       case "error":
         setLogLines((l) => [...l, `error: ${e.message}`]);
@@ -265,6 +357,7 @@ export default function App() {
       : settings.workspaceDir;
     const spec: RunSpec = {
       id,
+      chatSessionId: session.id,
       goal,
       cwd: runCwd,
       approvalMode: settings.approvalMode,
@@ -325,18 +418,76 @@ export default function App() {
     setRunning(null);
   }
 
+  async function maybeGenerateTitle(runId: string): Promise<void> {
+    // Read live state through refs — the captured `session` / `settings`
+    // here may be from sidecar-start time and not reflect the turn that
+    // just completed.
+    const liveSettings = settingsRef.current;
+    const liveSession = sessionRef.current;
+    if (!liveSettings || !liveSession) {
+      setLogLines((l) => [...l, "[title] skipped: no live session/settings"]);
+      return;
+    }
+    const sessionId = liveSession.id;
+    const turnsAtCall = liveSession.turns;
+    const t = turnsAtCall.find((t) => t.runId === runId);
+    if (!t || !t.userGoal) {
+      setLogLines((l) => [
+        ...l,
+        `[title] skipped: run ${runId.slice(0, 8)} not found in ${turnsAtCall.length} turns`,
+      ]);
+      return;
+    }
+    // Only retitle on the first turn of this session.
+    const idx = turnsAtCall.indexOf(t);
+    if (idx !== 0) return;
+    // Skip if a non-verbatim title is already set (user/LLM has named it).
+    const verbatim = deriveTitle(turnsAtCall);
+    const titleIsAuto =
+      !liveSession.title ||
+      liveSession.title === verbatim ||
+      liveSession.title === "New chat";
+    if (!titleIsAuto) return;
+
+    const firstAgentText = t.blocks
+      .filter((b) => b.kind === "text")
+      .map((b) => (b as { text: string }).text)
+      .join(" ");
+
+    setLogLines((l) => [...l, "[title] requesting title from baseten…"]);
+    const title = await generateTitle(
+      liveSettings.apiKey,
+      liveSettings.baseUrl,
+      liveSettings.model,
+      t.userGoal,
+      firstAgentText,
+    );
+    if (!title) {
+      setLogLines((l) => [...l, "[title] generation failed; keeping verbatim"]);
+      return;
+    }
+    setLogLines((l) => [...l, `[title] "${title}"`]);
+
+    // Apply + persist. The autosave effect won't fire because turns didn't
+    // change, so we save explicitly.
+    setSession((cur) => {
+      if (!cur || cur.id !== sessionId) return cur;
+      const next = { ...cur, title, updatedAt: Date.now() };
+      void (async () => {
+        await saveSession(next);
+        lastSavedSessionIdRef.current = next.id;
+        lastSavedTurnsRef.current = next.turns;
+        const idx = await listSessions();
+        setSummaries(idx);
+      })();
+      return next;
+    });
+  }
+
   async function persistSettings(next: AppSettings): Promise<void> {
     await saveSettings(next);
     setSettings(next);
     setView("chat");
-  }
-
-  function previewTheme(theme: AppSettings["theme"]): void {
-    if (!settings) return;
-    const next: AppSettings = { ...settings, theme };
-    setSettings(next);
-    // Persist asynchronously; failure is non-critical (just won't survive restart).
-    void saveSettings(next);
   }
 
   function handleNewSession(): void {
@@ -347,9 +498,19 @@ export default function App() {
   async function handleSelectSession(id: string): Promise<void> {
     const sess = await loadSession(id);
     if (sess) {
+      // Mark the loaded turns as "already saved" so the autosave effect
+      // doesn't fire and bump updatedAt purely from clicking.
+      lastSavedSessionIdRef.current = sess.id;
+      lastSavedTurnsRef.current = sess.turns;
       setSession(sess);
       setView("chat");
     }
+  }
+
+  async function handleTogglePin(id: string): Promise<void> {
+    await togglePinSession(id);
+    const idx = await listSessions();
+    setSummaries(idx);
   }
 
   async function handleDeleteSession(id: string): Promise<void> {
@@ -376,15 +537,29 @@ export default function App() {
   }
 
   return (
-    <div className="app-root">
+    <div
+      className="app-root"
+      style={{ ["--sidebar-w" as string]: `${sidebarW}px` }}
+    >
       <header className="app-header">
-        <div className="app-title">Recowork · GLM-5.2 via Baseten</div>
+        {/* macOS title bar already shows "Recowork", so we avoid repeating
+            the brand here. The version is the only useful in-app marker —
+            it lets the user verify which build they're running. */}
+        <div className="app-title">
+          <span className="app-title-dim">v{APP_VERSION}</span>
+        </div>
         <nav className="app-nav">
           <button
             className={view === "chat" ? "active" : ""}
             onClick={() => setView("chat")}
           >
             Chat
+          </button>
+          <button
+            className={view === "tools" ? "active" : ""}
+            onClick={() => setView("tools")}
+          >
+            Tools
           </button>
           <button
             className={view === "stats" ? "active" : ""}
@@ -406,22 +581,31 @@ export default function App() {
         onSelect={(id) => void handleSelectSession(id)}
         onNew={handleNewSession}
         onDelete={(id) => void handleDeleteSession(id)}
+        onTogglePin={(id) => void handleTogglePin(id)}
+      />
+      <div
+        className="sidebar-resize"
+        role="separator"
+        aria-orientation="vertical"
+        onMouseDown={startSidebarDrag}
+        onDoubleClick={() => setSidebarW(220)}
+        title="Drag to resize · double-click to reset"
       />
       <main className="app-main">
         {view === "stats" ? (
           <Stats />
+        ) : view === "tools" ? (
+          <Tools settings={settings} />
         ) : view === "setup" || (view === "chat" && needsSetup) ? (
           <Settings
             initial={settings}
             onSave={persistSettings}
-            onPreviewTheme={previewTheme}
             firstRun={true}
           />
         ) : view === "settings" ? (
           <Settings
             initial={settings}
             onSave={persistSettings}
-            onPreviewTheme={previewTheme}
             firstRun={false}
           />
         ) : (
@@ -433,12 +617,8 @@ export default function App() {
               onSubmit={handleSubmit}
               onAbort={handleAbort}
             />
-            {logLines.length > 0 && (
-              <details className="log-tray">
-                <summary>logs ({logLines.length})</summary>
-                <pre>{logLines.slice(-30).join("\n")}</pre>
-              </details>
-            )}
+            {/* logs intentionally hidden from the main UI — diagnostic lines
+                are still captured in `logLines` state for future debug surfaces */}
           </div>
         )}
       </main>

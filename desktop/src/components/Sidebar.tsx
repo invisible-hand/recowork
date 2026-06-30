@@ -6,9 +6,17 @@ interface Props {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onTogglePin: (id: string) => void;
 }
 
-export function Sidebar({ sessions, activeId, onSelect, onNew, onDelete }: Props) {
+export function Sidebar({
+  sessions,
+  activeId,
+  onSelect,
+  onNew,
+  onDelete,
+  onTogglePin,
+}: Props) {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -19,43 +27,47 @@ export function Sidebar({ sessions, activeId, onSelect, onNew, onDelete }: Props
         {sessions.length === 0 ? (
           <div className="sidebar-empty">No chats yet.</div>
         ) : (
-          sessions.map((s) => (
-            <div
-              key={s.id}
-              className={`session-row ${activeId === s.id ? "active" : ""}`}
-              onClick={() => onSelect(s.id)}
-            >
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div className="session-title">{s.title}</div>
-                <div className="session-meta">{formatTime(s.updatedAt)}</div>
-              </div>
-              <button
-                className="session-delete"
-                title="Delete"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (confirm(`Delete "${s.title}"?`)) onDelete(s.id);
-                }}
+          sessions.map((s) => {
+            const pinned = !!s.pinnedAt;
+            return (
+              <div
+                key={s.id}
+                className={`session-row${activeId === s.id ? " active" : ""}${
+                  pinned ? " pinned" : ""
+                }`}
+                onClick={() => onSelect(s.id)}
               >
-                ×
-              </button>
-            </div>
-          ))
+                {pinned && (
+                  <span className="session-pin-glyph" aria-hidden>
+                    ◆
+                  </span>
+                )}
+                <div className="session-title">{s.title}</div>
+                <button
+                  className="session-action session-pin"
+                  title={pinned ? "Unpin" : "Pin"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTogglePin(s.id);
+                  }}
+                >
+                  {pinned ? "◆" : "◇"}
+                </button>
+                <button
+                  className="session-action session-delete"
+                  title="Delete"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`Delete "${s.title}"?`)) onDelete(s.id);
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            );
+          })
         )}
       </div>
     </aside>
   );
-}
-
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  const now = new Date();
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  if (sameDay) {
-    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }
-  return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }

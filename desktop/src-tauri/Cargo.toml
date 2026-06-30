@@ -1,6 +1,6 @@
 [package]
 name = "recowork"
-version = "0.1.0"
+version = "0.1.14"
 description = "Recowork — agentic knowledge work on GLM-5.2 via Baseten."
 authors = ["recowork"]
 edition = "2021"
