@@ -7,6 +7,30 @@ via **Baseten**, driven by the **Claude Agent SDK** harness, wrapped in a
 Users supply a Baseten API key, pick a workspace folder, and start talking.
 Tool calls execute inside an Apple Container sandbox by default.
 
+## Requirements
+
+To run the packaged app:
+
+- **macOS 26 (Golden Gate) or later, Apple Silicon.** The sandbox uses
+  Apple's native Container framework, which requires both.
+- **A Baseten account with API key.** Recowork uses Baseten's
+  Anthropic-compatible inference endpoint to serve GLM-5.2. Sign up at
+  [baseten.co](https://baseten.co), grab a key from your account dashboard,
+  and paste it into the first-run UI.
+- **Apple Container CLI** if you want the sandbox (recommended):
+  ```bash
+  brew install container
+  container system start --enable-kernel-install
+  ```
+  If absent, the app falls back to running the agent in the host process —
+  the workspace lock still constrains file paths, but you lose VM isolation.
+
+Additional requirements to build from source:
+
+- **Node 20+** and **npm**.
+- **Rust toolchain** (`rustup`) — Tauri compiles a native shell.
+- **Xcode Command Line Tools** (`xcode-select --install`) for the linker.
+
 ## Architecture
 
 ```
@@ -37,9 +61,7 @@ sandbox/       Dockerfile + build script for the Apple Container image
 
 ## Develop
 
-Prereqs: macOS, Node 20+, Rust (`rustup`), Apple Container framework
-(`brew install container && container system start --enable-kernel-install`)
-if you want the sandbox.
+See [Requirements](#requirements) for prereqs.
 
 ```bash
 cd agent-core && npm install
