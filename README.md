@@ -11,8 +11,10 @@ Tool calls execute inside an Apple Container sandbox by default.
 
 To run the packaged app:
 
-- **macOS 26 (Golden Gate) or later, Apple Silicon.** The sandbox uses
-  Apple's native Container framework, which requires both.
+- **macOS 26 (Tahoe) or later, Apple Silicon.** The sandbox uses Apple's
+  native Container framework, which is supported on macOS 26 per the
+  upstream project and takes advantage of new virtualization and
+  networking features in that release.
 - **A Baseten account with API key.** Recowork uses Baseten's
   Anthropic-compatible inference endpoint to serve GLM-5.2. Sign up at
   [baseten.co](https://baseten.co), grab a key from your account dashboard,
