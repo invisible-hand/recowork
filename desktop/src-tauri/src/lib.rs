@@ -127,6 +127,11 @@ struct SandboxStats {
     containers: Vec<serde_json::Value>,
     /// Raw `container system property list` output (TOML-ish lines).
     properties: String,
+    /// Raw stdout/stderr from `container list`. Surfaced so the UI can
+    /// explain *why* zero containers show up (missing CLI, weird JSON
+    /// shape, …) rather than silently showing an empty list.
+    list_stdout: String,
+    list_stderr: String,
 }
 
 #[tauri::command]
@@ -142,13 +147,24 @@ fn sandbox_stats() -> SandboxStats {
     if !s.running {
         return s;
     }
+    // `container list` (no -a) returns only active containers. Earlier we
+    // used -a and tried to filter by `status == "running"` on the JS side;
+    // Apple's status payload doesn't match that exact string in every
+    // build, so we now trust the CLI's own running filter.
     if let Ok(out) = std::process::Command::new("container")
-        .args(["list", "-a", "--format", "json"])
+        .args(["list", "--format", "json"])
         .output()
     {
+        s.list_stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        s.list_stderr = String::from_utf8_lossy(&out.stderr).into_owned();
         if out.status.success() {
+            // Apple Container has emitted both bare-array (`[{...}]`) and
+            // wrapped (`{"containers":[...]}`) shapes across versions —
+            // accept either.
             if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
                 if let Some(arr) = v.as_array() {
+                    s.containers = arr.clone();
+                } else if let Some(arr) = v.get("containers").and_then(|x| x.as_array()) {
                     s.containers = arr.clone();
                 }
             }

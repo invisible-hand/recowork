@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
  * Embedded at build time from package.json. Use the badge in the header to
  * verify which build you're running when behaviour looks stale.
  */
-const APP_VERSION = "0.1.14";
+const APP_VERSION = "0.1.15";
 import {
   loadSettings,
   saveSettings,

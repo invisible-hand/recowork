@@ -18,6 +18,7 @@ interface ContainerInfo {
   id?: string;
   status?: string;
   configuration?: {
+    id?: string;
     image?: { reference?: string };
     resources?: { cpus?: number; memoryInBytes?: number };
     runtimeHandler?: string;
@@ -28,6 +29,8 @@ interface SandboxStatsT {
   running: boolean;
   containers: ContainerInfo[];
   properties: string;
+  list_stdout: string;
+  list_stderr: string;
 }
 
 interface Agg {
@@ -244,7 +247,10 @@ export function Stats() {
 }
 
 function SandboxView({ sandbox }: { sandbox: SandboxStatsT }) {
-  const running = sandbox.containers.filter((c) => c.status === "running");
+  // `container list` (no -a) already filters to active containers — trust
+  // the CLI rather than re-filtering by a string field whose value varies
+  // by Apple Container version.
+  const running = sandbox.containers;
   const totalCpu = running.reduce(
     (a, c) => a + (c.configuration?.resources?.cpus ?? 0),
     0,
@@ -260,14 +266,14 @@ function SandboxView({ sandbox }: { sandbox: SandboxStatsT }) {
         <StatCard label="Allocated CPUs" value={totalCpu.toString()} sub="across containers" />
         <StatCard label="Allocated memory" value={formatBytes(totalMem)} sub="VM limits, not live usage" />
       </div>
-      {running.length > 0 && (
+      {running.length > 0 ? (
         <table className="stats-table" style={{ marginTop: 12 }}>
           <thead>
             <tr><th>Container</th><th>Image</th><th>CPUs</th><th>Memory</th><th>IP</th></tr>
           </thead>
           <tbody>
-            {running.map((c) => {
-              const id = c.id ?? "—";
+            {running.map((c, i) => {
+              const id = c.id ?? c.configuration?.id ?? `row-${i}`;
               const img = c.configuration?.image?.reference ?? "—";
               const cpus = c.configuration?.resources?.cpus ?? 0;
               const mem = c.configuration?.resources?.memoryInBytes ?? 0;
@@ -284,8 +290,48 @@ function SandboxView({ sandbox }: { sandbox: SandboxStatsT }) {
             })}
           </tbody>
         </table>
+      ) : (
+        <SandboxDebug sandbox={sandbox} />
       )}
     </>
+  );
+}
+
+/**
+ * Shown when the sandbox is on but the container CLI reported zero active
+ * containers — usually means the sidecar's `container run` is failing or
+ * the JSON shape differs from what we expected. Surface the raw output so
+ * the user can see exactly what `container list` said.
+ */
+function SandboxDebug({ sandbox }: { sandbox: SandboxStatsT }) {
+  const stdout = sandbox.list_stdout?.trim() ?? "";
+  const stderr = sandbox.list_stderr?.trim() ?? "";
+  const empty =
+    stdout === "" || stdout === "[]" || stdout === "null" || stdout === '{"containers":[]}';
+  return (
+    <div className="stats-foot" style={{ marginTop: 12 }}>
+      {empty ? (
+        <>
+          The container CLI reports no active containers. The sidecar spawns
+          one when you send a message — open the Chat tab and send a turn,
+          then come back here.
+        </>
+      ) : (
+        <>
+          <div style={{ marginBottom: 6 }}>
+            <code>container list</code> returned data Recowork couldn't parse
+            into a container row. Raw output:
+          </div>
+          <pre style={{ maxHeight: 180 }}>{stdout || "(empty)"}</pre>
+          {stderr && (
+            <>
+              <div style={{ marginTop: 6, marginBottom: 4 }}>stderr:</div>
+              <pre style={{ maxHeight: 120 }}>{stderr}</pre>
+            </>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
