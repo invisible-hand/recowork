@@ -5,7 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
  * Embedded at build time from package.json. Use the badge in the header to
  * verify which build you're running when behaviour looks stale.
  */
-const APP_VERSION = "0.1.16";
+const APP_VERSION = "0.1.17";
 import {
   loadSettings,
   saveSettings,
@@ -37,8 +37,10 @@ import { Composer } from "./components/Composer";
 import { Sidebar } from "./components/Sidebar";
 import { Stats } from "./components/Stats";
 import { Tools } from "./components/Tools";
+import { MCPServers } from "./components/MCPServers";
+import { listMcps, toRunSpecMcpServers, type McpServer } from "./lib/mcps";
 
-type View = "chat" | "settings" | "setup" | "stats" | "tools";
+type View = "chat" | "settings" | "setup" | "stats" | "tools" | "mcps";
 
 export default function App() {
   const [view, setView] = useState<View>("chat");
@@ -47,6 +49,7 @@ export default function App() {
   const [session, setSession] = useState<ChatSession | null>(null);
   const [summaries, setSummaries] = useState<SessionSummary[]>([]);
   const [approval, setApproval] = useState<PendingApproval | null>(null);
+  const [mcps, setMcps] = useState<McpServer[]>([]);
   // Log lines are captured for future debug surfaces, but the UI no longer
   // shows them inline. Drop the read binding to keep typecheck happy.
   const [, setLogLines] = useState<string[]>([]);
@@ -127,6 +130,9 @@ export default function App() {
       } else {
         setSession(newSession());
       }
+      // MCP servers are loaded here and refreshed by the MCPs tab via
+      // its onChanged callback so RunSpec always sees the latest set.
+      setMcps(await listMcps());
     })();
   }, []);
 
@@ -369,19 +375,20 @@ export default function App() {
       workspaceLock: settings.sandboxEnabled
         ? undefined
         : settings.workspaceDir || undefined,
-      mcpServers:
-        settings.mcpFilesystemEnabled && filesystemRoot
-          ? {
-              filesystem: {
-                command: "npx",
-                args: [
-                  "-y",
-                  "@modelcontextprotocol/server-filesystem",
-                  filesystemRoot,
-                ],
-              },
-            }
-          : undefined,
+      mcpServers: (() => {
+        const merged: RunSpec["mcpServers"] = { ...toRunSpecMcpServers(mcps) };
+        if (settings.mcpFilesystemEnabled && filesystemRoot) {
+          merged.filesystem = {
+            command: "npx",
+            args: [
+              "-y",
+              "@modelcontextprotocol/server-filesystem",
+              filesystemRoot,
+            ],
+          };
+        }
+        return Object.keys(merged).length ? merged : undefined;
+      })(),
     };
     setSession((cur) =>
       cur && updateSessionTurns(cur, (turns) => [
@@ -573,6 +580,12 @@ export default function App() {
             Tools
           </button>
           <button
+            className={view === "mcps" ? "active" : ""}
+            onClick={() => setView("mcps")}
+          >
+            MCPs
+          </button>
+          <button
             className={view === "stats" ? "active" : ""}
             onClick={() => setView("stats")}
           >
@@ -606,7 +619,9 @@ export default function App() {
         {view === "stats" ? (
           <Stats />
         ) : view === "tools" ? (
-          <Tools settings={settings} />
+          <Tools settings={settings} mcps={mcps} />
+        ) : view === "mcps" ? (
+          <MCPServers onChanged={() => void (async () => setMcps(await listMcps()))()} />
         ) : view === "setup" || (view === "chat" && needsSetup) ? (
           <Settings
             initial={settings}

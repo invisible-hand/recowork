@@ -8,6 +8,7 @@
  * the user's nod under the default "writes_only" policy.
  */
 import type { AppSettings } from "../lib/store";
+import type { McpServer } from "../lib/mcps";
 
 interface ToolDef {
   name: string;
@@ -32,12 +33,15 @@ const BUILTIN_TOOLS: ToolDef[] = [
 
 interface Props {
   settings: AppSettings;
+  mcps: McpServer[];
 }
 
-export function Tools({ settings }: Props) {
+export function Tools({ settings, mcps }: Props) {
   const sandboxOn = settings.sandboxEnabled;
   const filesystemOn = settings.mcpFilesystemEnabled;
   const wsPath = sandboxOn ? "/workspace" : settings.workspaceDir || "—";
+  const activeMcps = mcps.filter((m) => m.enabled && m.name.trim());
+  const totalMcps = (filesystemOn ? 1 : 0) + activeMcps.length;
 
   return (
     <div className="tools-pane">
@@ -45,7 +49,9 @@ export function Tools({ settings }: Props) {
         <h1 className="tools-title">Tools & connectors</h1>
         <div className="tools-subtitle">
           {BUILTIN_TOOLS.length} built-in tools
-          {filesystemOn && wsPath !== "—" ? " · 1 MCP server connected" : ""}
+          {totalMcps > 0
+            ? ` · ${totalMcps} MCP server${totalMcps === 1 ? "" : "s"} connected`
+            : ""}
         </div>
       </header>
 
@@ -68,24 +74,50 @@ export function Tools({ settings }: Props) {
       </div>
 
       <h2>MCP connectors</h2>
-      {filesystemOn ? (
-        <div className="tools-grid">
-          <div className="tool-card">
-            <div className="tool-row">
-              <span className="tool-cat tool-cat-mcp">mcp</span>
-              <span className="tool-card-name">filesystem</span>
-              <span className="tool-badge tool-badge-ok">connected</span>
-            </div>
-            <div className="tool-card-blurb">
-              <code>@modelcontextprotocol/server-filesystem</code> scoped to{" "}
-              <code>{wsPath}</code>. Exposes list/read/write/search file tools
-              prefixed with <code>mcp__filesystem__</code>.
-            </div>
-          </div>
+      {totalMcps === 0 ? (
+        <div className="tools-empty">
+          No MCP servers connected. Enable the built-in filesystem server in
+          Settings → Workspace, or add your own in the MCPs tab.
         </div>
       ) : (
-        <div className="tools-empty">
-          Filesystem MCP server is disabled. Re-enable in Settings → Workspace.
+        <div className="tools-grid">
+          {filesystemOn && (
+            <div className="tool-card">
+              <div className="tool-row">
+                <span className="tool-cat tool-cat-mcp">mcp</span>
+                <span className="tool-card-name">filesystem</span>
+                <span className="tool-badge tool-badge-ok">built-in</span>
+              </div>
+              <div className="tool-card-blurb">
+                <code>@modelcontextprotocol/server-filesystem</code> scoped to{" "}
+                <code>{wsPath}</code>. Tools prefixed <code>mcp__filesystem__</code>.
+              </div>
+            </div>
+          )}
+          {activeMcps.map((m) => (
+            <div key={m.id} className="tool-card">
+              <div className="tool-row">
+                <span className="tool-cat tool-cat-mcp">mcp</span>
+                <span className="tool-card-name">{m.name}</span>
+                <span className="tool-badge tool-badge-ok">
+                  {m.transport}
+                </span>
+              </div>
+              <div className="tool-card-blurb">
+                {m.transport === "stdio" ? (
+                  <>
+                    Runs <code>{m.command}{m.args.length ? " " + m.args.join(" ") : ""}</code>.
+                    Tools prefixed <code>mcp__{m.name}__</code>.
+                  </>
+                ) : (
+                  <>
+                    HTTP endpoint <code>{m.url}</code>. Tools prefixed{" "}
+                    <code>mcp__{m.name}__</code>.
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

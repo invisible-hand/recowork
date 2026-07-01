@@ -1,6 +1,6 @@
 {
   "name": "@recowork/agent-core",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "private": true,
   "description": "Claude Agent SDK harness pointed at Baseten GLM-5.2.",
   "type": "module",
